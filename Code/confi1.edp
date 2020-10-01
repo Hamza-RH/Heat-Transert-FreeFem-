@@ -1,0 +1,180 @@
+assert(version>1.18); //   
+real s0=clock();
+real D=1.0;
+real L=2.0;
+real b=2;
+real a=-3;
+int ifrst=1;
+int rf=6;
+
+border inflow(t=0,b){x=a;y=b-t;label=1;};
+border ax1(t=a,-1){x=t;y=0;label=5;};
+border ax2(t=(-1+D),(-1+D+L)){x=t;y=0;label=5;};
+border ax3(t=(-1+L+2*D),12){x=t;y=0;label=5;};
+border outflow(t=0,b){x=12;y=t;label=2;};
+border upper(t=a,12){x=9-t;y=b;label=3;};
+border sphere1(t=pi,0){x=0.5*D*cos(t)+(-2+D)*0.5;y=0.5*D*sin(t);label=4;};
+border sphere2(t=pi,0){x=((-2+3*D+2*L)*0.5)+0.5*D*cos(t);y=0.5*D*sin(t);label=10;};
+mesh Th;
+
+Th = buildmesh (ax2(12*rf)+inflow(3*rf)+ax3(12*rf)+ax1(4*rf)+sphere1(12*rf)+sphere2(12*rf)+outflow(3*rf)+upper(12*rf));
+savemesh(Th,"restart.msh");
+
+ plot(Th,wait=1);
+fespace Xh(Th,P2),Mh(Th,P2);
+Xh u1,u2,v1,v2,vstar1,vstar2,vhat1,vhat2,phi,That,T,X,Y;
+X=x;
+Y=y;
+// vstar et vhat sont divises par dt
+Mh p,q,div,d;
+// real[int] pwork(p.n);
+
+int i=0;
+int nsteps=1000;
+real one =1;
+real dt=0.01;
+real alpha=1/dt;
+//real alpha=1.;
+real Re=100;
+real visc=1/Re;
+real Pr=0.72;
+real kappa=1/Re/Pr;
+real Gr=1.;
+real drag1;
+real drag2;
+real Nu1;
+real Nu2;
+real Ri=1.0;
+
+problem pression(p,q,solver=CG,eps=-1.0e-6) =
+	int2d(Th)(  (dx(p)*dx(q) + dy(p)*dy(q))*y)
+	 + int2d(Th) ( q*d ) 
+ - int1d(Th,1,3) (q*(N.x*(vstar1-alpha)+N.y*vstar2)*y) - int1d(Th,4,10) (q*(N.x*vstar1+N.y*vstar2)*y)
+ + on(2,p=0);// d= div *y
+
+problem helmholtz([u1,u2],[v1,v2], solver=CG,eps=-1.0e-6) =
+	int2d(Th)( (alpha*(u1*v1+u2*v2)
+	 + visc*( dx(u1)*dx(v1) + dy(u1)*dy(v1)
+            +  dx(u2)*dx(v2) + dy(u2)*dy(v2) - u2*v2/y^2))*y)
+	// - int2d(Th) ((vhat1*v1+vhat2*v2)*y) 
+	 - int2d(Th) (((vhat1+Ri*T)*v1+vhat2*v2)*y)	
+        +	on(1,3,u1=1,u2=0)  +on(4,10,u1=0,u2=0)+on(5,u2=0);
+
+problem  Temperature(T,phi, solver=CG,eps=-1.0e-6) =
+         int2d(Th)( (alpha*(T*phi)
+	 + (1/(Re*Pr))*( dx(T)*dx(phi) + dy(T)*dy(phi)))*y)
+         - int2d(Th) (That*phi*y)
+         + on(1,3,T=0)  +on(4,10,T=1);
+
+cout << " alpha = " << alpha << " visc = " << visc << endl;
+cout << "------------------------------------------- " << endl;
+int idt;
+real temps=0;     
+u1=1;
+u2=0;
+int npts;
+cout << "npts=" << u1[].n << endl;
+if(ifrst)
+      {
+	ifstream f("u1split.rst");
+	ifstream g("u2split.rst");
+	ifstream h("Tsplit.rst");
+//        f >> npts;
+//        for( int ii=0;ii<u1[].n;ii++)
+//         {f >> u1[](ii);};
+          f >> u1[];
+          g >> u2[];
+          h >> T[];
+      };
+cout << "value at (1,1)" << u1(1,1) << endl;
+
+p=0;
+cout << "Condition initiale:" << endl;
+//plot([u1,u2],p,wait=1);
+plot(u1,wait=1,cmm="condition initiale");
+//plot(u2,wait=1);
+//plot(T,wait=1);
+{
+ ofstream h("cd_nu.dat");
+
+
+for (idt = 1; idt < nsteps; idt++)
+ {
+   temps += dt;
+   vstar1 = convect([u1,u2],-dt,u1);
+   vstar2 = convect([u1,u2],-dt,u2);
+   vstar1 = alpha*vstar1;
+   vstar2 = alpha*vstar2;
+   That = convect([u1,u2],-dt,T);
+   That=alpha*That;
+//   plot(vstar1,wait=1,cmm="vstar1");
+   d=y*dx(vstar1)+y*dy(vstar2)+vstar2; //y*div
+//   plot(d, wait=1,cmm="div de vstar");
+   pression;
+ // plot(p,wait=0,cmm="pression");
+   vhat1=vstar1 - dx(p);
+//   plot(vhat1,wait=1,cmm="vhat1");
+   vhat2=vstar2 - dy(p);
+    d=y*dx(vhat1)+y*dy(vhat2)+vhat2;
+//   plot(d, wait=1,cmm="div de vhat");
+   cout << " --max(div vhat): " << dt*d[].max << endl;
+   helmholtz;
+   
+    div=y*dx(u1)+y*dy(u2)+u2;
+//   plot(u1,wait=1,cmm="u1, t="+temps);     
+//   plot(div, wait=1,cmm="div de u");
+   cout << " --max(div u): " << div[].max << endl;
+   cout << " --------- temps " << temps << " \n ";
+     plot(u1,wait=0,cmm="u1, t="+temps);     
+//  plot(u2,wait=0,cmm="u2, t="+temps);     
+// plot(p,wait=0,cmm="p, t="+temps);     
+Temperature;
+// plot(T,wait=0,cmm="T, t="+temps);
+//plot(u1,wait=0,cmm="u1, t="+temps);
+// ==========Calculating the DRAG for Sphere 1 ========//
+    real viscdrag1=-2*pi*int1d(Th,4)((visc*(2*dx(u1)*N.x+(dy(u1)+y*dx(u2))*N.y))*y);
+    real pressdrag1=-2*pi*int1d(Th,4)((-p*N.x)*y);
+    drag1=viscdrag1+pressdrag1;
+    real Cd1=drag1*8/pi;
+//    cout << " Cd1= " << Cd1 << endl;
+// cout<<"time"<<temps<<"Cd"<<endl;
+
+
+
+
+// ===========Calculating the DRAG For Sphere 2===========//
+    real viscdrag2=-2*pi*int1d(Th,10)((visc*(2*dx(u1)*N.x+(dy(u1)+y*dx(u2))*N.y))*y);
+    real pressdrag2=-2*pi*int1d(Th,10)((-p*N.x)*y);
+    drag2=viscdrag2+pressdrag2; 
+    real Cd2=drag2*8/pi;
+//    cout << " Cd2= " << Cd2 << endl;
+
+//cout<<"time"<<temps<<"Cd"<<endl;
+  
+// Nusselt number //
+  Nu1 = kappa*2*int1d(Th,4) ((dx(T)*N.x + dy(T)*N.y)*y);
+  Nu2 =  kappa*2*int1d(Th,10) ((dx(T)*N.x + dy(T)*N.y)*y);
+ cout << " Nu= " << Nu1 << endl;
+h << temps <<" "<< Cd1 <<" "<<Cd2<< " "<<Nu1<<" "<<Nu2 << endl;
+
+ }
+}
+     {
+ 
+        ofstream f("u1split.rst");
+        ofstream g("u2split.rst");
+        ofstream h("Tsplit.rst");
+        ofstream xx("x.dat");
+        ofstream yy("y.dat");
+        
+        f << u1[] << endl;
+        g << u2[] << endl;
+        h << T[] << endl;
+        xx << X[] << endl;
+        yy << Y[] << endl;
+      }
+cout << "npts=" << u1[].n << endl;
+cout << "value at (1,1)" << u1(1,1) << endl;
+plot(u1,wait=1,cmm="u1, t="+temps,ps="u1.ps");
+plot(u2,wait=1,cmm="u2, t="+temps,ps="u2.ps");
+plot(T, wait=1,cmm="T,  t="+temps,ps="T.ps");

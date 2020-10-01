@@ -1,0 +1,171 @@
+
+assert(version>1.18); //  for big bug is non symetric matrix see HISTORY  
+real s0=clock();
+real D=1.0;
+real L=2.0;
+real b=2;
+real a=-3;
+int ifrst=0;
+int rf=4;
+
+border inflow(t=0,b){x=a;y=b-t;label=1;};
+border ax1(t=a,-1){x=t;y=0;label=5;};
+border ax2(t=(-1+D),(-1+D+L)){x=t;y=0;label=5;};
+border ax3(t=(-1+L+2*D),12){x=t;y=0;label=5;};
+border outflow(t=0,b){x=12;y=t;label=2;};
+border upper(t=a,12){x=9-t;y=b;label=3;};
+border sphere1(t=pi,0){x=0.5*D*cos(t)+(-2+D)*0.5;y=0.5*D*sin(t);label=4;};
+border sphere2(t=pi,0){x=((-2+3*D+2*L)*0.5)+0.5*D*cos(t);y=0.5*D*sin(t);label=10;};
+mesh Th;
+
+Th = buildmesh (ax2(12*rf)+inflow(3*rf)+ax3(12*rf)+ax1(4*rf)+sphere1(12*rf)+sphere2(12*rf)+outflow(3*rf)+upper(12*rf));
+savemesh(Th,"restart.msh");
+
+
+fespace Xh(Th,P2),Mh(Th,P1);
+Xh w1,w2,v1,v2,vstar1,vstar2,vhat1,vhat2,phi,vort,msk,That,PHI,T,X,Y;
+// vstar et vhat are divided by dt
+Mh p,Phi;
+// real[int] pwork(p.n);
+X=x;
+Y=y;
+int i=0;
+int nsteps=300;
+real one =1;
+real dt=0.1;
+real alpha=1/dt;
+//real alpha=1.;
+real Re=100;
+real visc=1/Re;
+real Pr=0.72;
+real kappa=1/Re/Pr;
+real Gr=1.;
+real drag1;
+real drag2;
+real Nu1;
+real Nu2;
+real Ri=1.0;
+
+
+  problem Stokes([v1,v2,p],[w1,w2,Phi]) =
+  int2d(Th) (((v1*w1+v2*w2)/dt+
+             visc*(dx(v1)*dx(w1)+dy(v1)*dy(w1)
+             + dx(v2)*dx(w2)+dy(v2)*dy(w2)+v2*w2/y^2)
+              - p*(dx(w1)+dy(w2)+w2/y)
+              + Phi*(dx(v1)+dy(v2)+v2/y)
+              + p*Phi*0.000001
+             )*y)
+	 - int2d(Th) ((vstar1*w1+vstar2*w2)*y) 
+	+ on(2,p=0)
+        +	on(1,3,v1=1,v2=0)  + on(4,10,v1=0,v2=0)+on(5,v2=0);
+problem  Temperature(T,PHI, solver=CG,eps=-1.0e-6) =
+         int2d(Th)( (alpha*(T*PHI)
+	 + (1/(Re*Pr))*( dx(T)*dx(PHI) + dy(T)*dy(PHI)))*y)
+         - int2d(Th) (That*PHI*y)
+         + on(1,3,T=0)  +on(4,10,T=1);
+
+cout << " alpha = " << alpha << " visc = " << visc << endl;
+cout << "------------------------------------------ " << endl;
+int idt;
+real temps=0; 
+
+ 
+   
+  v1=1;
+  v2=0;
+if(ifrst)
+      {
+	ifstream f("v1.rst");
+	ifstream g("v2.rst");
+	ifstream h("Tsplit.rst");
+	ifstream k("Psplit.rst");
+        f >> v1[];
+        g >> v2[];
+        h >> T[];
+        k >> p[];
+        
+      };
+
+
+p=0;
+cout << "Condition initiale:" << endl;
+plot(v1,wait=1,cmm="v1");
+plot(v2,wait=1,cmm="v2");
+
+ofstream hist("hist.dat");
+{{
+ ofstream h("cd_nu2.dat");
+for (idt = 1; idt <= nsteps; idt++)
+ {
+   temps += dt;
+   vstar1 = convect([v1,v2],-dt,v1);
+   vstar2 = convect([v1,v2],-dt,v2);
+That = convect([v1,v2],-dt,T);
+   That=alpha*That;
+   vstar1 = alpha*vstar1 +Ri*T;
+   vstar2 = alpha*vstar2;
+   
+   Stokes;
+   
+   plot(v1,wait=0,cmm="v1, t="+temps);     
+//   plot(v2,wait=1,cmm="v2, t="+temps);     
+//   plot(p,wait=1,cmm="p, t="+temps);     
+   hist << temps << " " << v2(3,0) << endl;
+if(!(idt%100))
+      {
+        ofstream f("v1.rst");
+        ofstream g("v2.rst");
+        f << v1[] << endl;
+        g << v2[] << endl;
+      };
+ Temperature;
+//plot(T,wait=0,cmm="T, t="+temps);    
+ }
+
+// ==========Calculating the DRAG for Sphere 1 ========//
+    real viscdrag1=-2*pi*int1d(Th,4)((visc*(2*dx(v1)*N.x+(dy(v1)+y*dx(v2))*N.y))*y);
+    real pressdrag1=-2*pi*int1d(Th,4)((-p*N.x)*y);
+    drag1=viscdrag1+pressdrag1;
+    real Cd1=drag1*8/pi;
+//    cout << " Cd1= " << Cd1 << endl;
+// cout<<"time"<<temps<<"Cd"<<endl;
+
+
+
+
+// ===========Calculating the DRAG For Sphere 2===========//
+    real viscdrag2=-2*pi*int1d(Th,10)((visc*(2*dx(v1)*N.x+(dy(v1)+y*dx(v2))*N.y))*y);
+    real pressdrag2=-2*pi*int1d(Th,10)((-p*N.x)*y);
+    drag2=viscdrag2+pressdrag2; 
+    real Cd2=drag2*8/pi;
+//    cout << " Cd2= " << Cd2 << endl;
+
+//cout<<"time"<<temps<<"Cd"<<endl;
+  
+// Nusselt number //
+  Nu1 = kappa*2*int1d(Th,4) ((dx(T)*N.x + dy(T)*N.y)*y);
+  Nu2 =  kappa*2*int1d(Th,10) ((dx(T)*N.x + dy(T)*N.y)*y);
+ cout << " Nu= " << Nu1 << endl;
+h << temps <<" "<< Cd1 <<" "<<Cd2<< " "<<Nu1<<" "<<Nu2 << endl;
+}
+ }
+      {
+        ofstream f("v1.rst");
+        ofstream g("v2.rst");
+        ofstream h("Tsplit.rst");
+        ofstream xx("x.dat");
+        ofstream yy("y.dat");
+        ofstream k("Psplit.rst");
+        
+       f << v1[] << endl;
+        g << v2[] << endl;
+        h << T[] << endl;
+        xx << X[] << endl;
+        yy << Y[] << endl;
+        k << p[] << endl;
+       
+      };
+plot(v1,wait=1,cmm="u1, t="+temps,ps="v1.ps");
+plot(v2,wait=1,cmm="u2, t="+temps,ps="v2.ps");
+plot(T, wait=1,cmm="T,  t="+temps,ps="T.ps");
+plot(p, wait=1,cmm="p,  t="+temps,ps="p .ps");
